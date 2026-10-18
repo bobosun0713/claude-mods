@@ -737,6 +737,11 @@ export const register: Register = on => {
     return result
   })
 
+  // The description registered at startup is fixed; follow the current language instead
+  on('command.describe', { command: 'skill-cost' }, async ($, e, next) =>
+    next({ ...e, description: TEXT[await read($, lang)].description }),
+  )
+
   on('command.run', { command: 'skill-cost' }, async ($, e) => {
     const arg = e.args.trim()
     const folder = await $.session.cwd()
@@ -753,6 +758,8 @@ export const register: Register = on => {
 
       await update($, lang, () => want)
       await $.store.set(LANG_KEY, want)
+      // The typeahead caches the description; ask it to describe the command again
+      $.ui.invalidate('command.describe')
 
       return { text: TEXT[want].switched }
     }
