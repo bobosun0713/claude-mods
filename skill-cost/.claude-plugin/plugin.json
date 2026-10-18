@@ -1,6 +1,6 @@
 {
   "name": "skill-cost",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tracks Claude Code token usage and cost by skill and model (current session, per project directory, and all history)",
   "author": { "name": "bobosun0713" },
   "types": "./types/index.d.ts"
