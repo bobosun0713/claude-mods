@@ -1,9 +1,9 @@
 name: Update model prices
 
-# 每天依 Claude 官方價格頁更新 skill-cost 的內建價格表；有變動才開 PR
+# 每月依 Claude 官方價格頁更新 skill-cost 的內建價格表；有變動才開 PR
 on:
   schedule:
-    - cron: "0 1 * * *" # 每天 01:00 UTC（台灣時間 09:00）
+    - cron: "0 1 1 * *" # 每月 1 日 01:00 UTC（台灣時間 09:00）
   workflow_dispatch:
 
 permissions:

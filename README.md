@@ -37,7 +37,7 @@ claude plugin uninstall <mod-name>   # 移除
 
 | Workflow | 排程 | 內容 |
 | --- | --- | --- |
-| [Update model prices](./.github/workflows/update-prices.yml) | 每天 01:00 UTC，亦可手動執行 | 依 Claude 官方價格頁更新 `skill-cost/scripts/prices.json`，有變動時開立 PR |
+| [Update model prices](./.github/workflows/update-prices.yml) | 每月 1 日 01:00 UTC，亦可手動執行 | 依 Claude 官方價格頁更新 `skill-cost/scripts/prices.json`，有變動時開立 PR |
 
 使用前須於 repository 的 **Settings → Actions → General → Workflow permissions** 勾選 **Allow GitHub Actions to create and approve pull requests**。
 

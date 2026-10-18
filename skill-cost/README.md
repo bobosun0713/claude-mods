@@ -94,7 +94,7 @@ skill 載入後（透過 Skill 工具或 slash command），至使用者送出�
 | --- | --- | --- |
 | 1 | 自訂價格 | `~/.claude/skill-cost/prices.json` |
 | 2 | 官方價格 | [Claude 官方價格頁](https://platform.claude.com/docs/en/about-claude/pricing)（讀取其 [Markdown 版本](https://platform.claude.com/docs/en/about-claude/pricing.md)），快取於 `~/.claude/skill-cost/online-prices.json` |
-| 3 | 內建價格 | [`scripts/prices.json`](./scripts/prices.json)，由 repository 的 GitHub Actions 每天依官方價格頁同步 |
+| 3 | 內建價格 | [`scripts/prices.json`](./scripts/prices.json)，由 repository 的 GitHub Actions 每月依官方價格頁同步 |
 
 執行 `/skill-cost prices` 可查看各模型目前採用的價格、來源與官方價格的更新時間。
 
