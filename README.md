@@ -1,85 +1,90 @@
 # claude-mods
 
-Claude Code 擴充模組（mod）集合。每個 mod 皆為獨立的 Claude Code plugin，透過 hooks module 擴充 Claude Code 的介面與行為。
+English | [繁體中文](./README.zh-TW.md)
 
-本 repository 同時是一個 plugin marketplace，可依需求個別安裝其中的 mod。
+A collection of mods for Claude Code. Each mod is a standalone Claude Code plugin that extends Claude Code's interface and behavior through a hooks module.
+
+This repository is also a plugin marketplace, so you can install each mod individually.
 
 ## Mods
 
-| 名稱 | 說明 | 版本 |
+| Name | Description | Version |
 | --- | --- | --- |
-| [skill-cost](./skill-cost/README.md) | 依 skill 與模型統計 token 用量及費用 | 0.1.0 |
+| [skill-cost](./skill-cost/README.md) | Token usage and cost broken down by skill and model | 0.1.0 |
 
-各 mod 的功能、指令與限制，請參閱其目錄下的 `README.md`。
+See the `README.md` in each mod's directory for its features, commands, and limitations.
 
-## 安裝
+## Installation
 
-於 Claude Code 輸入框執行：
+Run the following at the Claude Code prompt:
 
 ```
 /plugin install <mod-name> --marketplace bobosun0713/claude-mods
 ```
 
-首次安裝時會提示 `Add marketplace?`，輸入 `y` 確認，並選擇安裝範圍（建議使用預設的 user scope，使所有 session 皆會載入）。
+On first install, Claude Code asks `Add marketplace?`. Enter `y` to confirm, then choose an install scope. The default user scope is recommended so the mod loads in every session.
 
-也可執行 `/plugin`，從清單中選擇要安裝的 mod。
+You can also run `/plugin` and pick a mod from the list.
 
-## 更新與移除
+## Updating and removing
 
 ```
-claude plugin update <mod-name>      # 更新至 repository 最新版本
-claude plugin uninstall <mod-name>   # 移除
+claude plugin update <mod-name>      # update to the latest version in this repository
+claude plugin uninstall <mod-name>   # remove
 ```
 
-更新後於進行中的 session 執行 `/reload-plugins` 以套用變更。
+After updating, run `/reload-plugins` in any running session to apply the change.
 
-## 自動化
+## Automation
 
-| Workflow | 排程 | 內容 |
+| Workflow | Schedule | Purpose |
 | --- | --- | --- |
-| [Update model prices](./.github/workflows/update-prices.yml) | 每月 1 日 01:00 UTC，亦可手動執行 | 依 Claude 官方價格頁更新 `skill-cost/scripts/prices.json`，有變動時開立 PR |
+| [Update model prices](./.github/workflows/update-prices.yml) | 01:00 UTC on the 1st of each month, or on demand | Updates `skill-cost/scripts/prices.json` from the official Claude pricing page and opens a PR when prices change |
 
-使用前須於 repository 的 **Settings → Actions → General → Workflow permissions** 勾選 **Allow GitHub Actions to create and approve pull requests**。
+The workflow needs **Allow GitHub Actions to create and approve pull requests** enabled under the repository's **Settings → Actions → General → Workflow permissions**.
 
-## 目錄結構
+## Repository layout
 
 ```
 claude-mods/
 ├── .github/workflows/        # GitHub Actions
 ├── .claude-plugin/
-│   └── marketplace.json      # marketplace 定義，列出所有 mod
+│   └── marketplace.json      # marketplace definition listing every mod
 └── <mod-name>/
     ├── .claude-plugin/
-    │   └── plugin.json       # plugin manifest（名稱、版本、說明）
+    │   └── plugin.json       # plugin manifest (name, version, description)
     ├── hooks/
-    │   ├── hooks.json        # 指定 hooks module 進入點
+    │   ├── hooks.json        # hooks module entry point
     │   └── register.tsx      # hooks module
-    ├── types/                # $.state 型別定義
-    ├── tests/                # claude plugin test 測試
-    └── README.md
+    ├── types/                # $.state type declarations
+    ├── tests/                # tests run by claude plugin test
+    ├── README.md             # English documentation
+    └── README.zh-TW.md       # Traditional Chinese documentation
 ```
 
-## 開發
+## Development
 
-| 指令 | 用途 |
+| Command | Purpose |
 | --- | --- |
-| `claude --plugin-dir ./<mod-name>` | 以開發模式載入 mod，檔案儲存後自動重新載入 |
-| `claude plugin validate ./<mod-name>` | 驗證 manifest 與 hooks module |
-| `claude plugin validate .` | 驗證 marketplace 定義 |
-| `claude plugin test ./<mod-name>` | 執行 mod 測試 |
-| `python3 -m unittest discover -s skill-cost/scripts` | 執行 skill-cost 價格解析測試 |
+| `claude --plugin-dir ./<mod-name>` | Load a mod in development mode; it reloads whenever a file is saved |
+| `claude plugin validate ./<mod-name>` | Validate the manifest and hooks module |
+| `claude plugin validate .` | Validate the marketplace definition |
+| `claude plugin test ./<mod-name>` | Run the mod's tests |
+| `python3 -m unittest discover -s skill-cost/scripts` | Run the skill-cost price parsing tests |
 
-`.claude-plugin/types/` 由 Claude Code 於載入 mod 時自動產生，不納入版本控制。首次以 `--plugin-dir` 載入後即可使用 `tsc -p ./<mod-name>` 進行型別檢查。
+Mods need no `package.json`, bundler, or build step: Claude Code loads `.ts` and `.tsx` files directly.
 
-### 新增 mod
+Claude Code generates `.claude-plugin/types/` when it loads a mod; the directory is not tracked in git. After loading a mod once with `--plugin-dir`, your editor gets autocompletion and `tsc -p ./<mod-name>` type-checks the mod.
 
-1. 建立 `<mod-name>/` 目錄，包含 `.claude-plugin/plugin.json`、`hooks/` 與 `README.md`。
-2. 於 `.claude-plugin/marketplace.json` 的 `plugins` 陣列新增一筆：
+### Adding a mod
+
+1. Create a `<mod-name>/` directory containing `.claude-plugin/plugin.json`, `hooks/`, `README.md` (English), and `README.zh-TW.md` (Traditional Chinese).
+2. Add an entry to the `plugins` array in `.claude-plugin/marketplace.json`:
    ```json
-   { "name": "<mod-name>", "source": "./<mod-name>", "description": "<說明>" }
+   { "name": "<mod-name>", "source": "./<mod-name>", "description": "<description>" }
    ```
-3. 更新本文件的 Mods 列表。
+3. Update the Mods table in both `README.md` and `README.zh-TW.md`.
 
-### 發佈新版本
+### Releasing a new version
 
-調整 mod 後，請同步提高其 `plugin.json` 的 `version`（遵循 Semantic Versioning），再推送至 repository。
+When you change a mod, bump the `version` in its `plugin.json` (following Semantic Versioning) before pushing to the repository.
