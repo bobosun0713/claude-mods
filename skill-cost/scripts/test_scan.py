@@ -1,6 +1,6 @@
-"""scan.py 的價格解析與計價測試。
+"""Tests for scan.py price parsing and pricing.
 
-執行：python3 -m unittest discover -s skill-cost/scripts
+Run: python3 -m unittest discover -s skill-cost/scripts
 """
 
 import os
@@ -92,7 +92,7 @@ class CostTest(unittest.TestCase):
 
     def test_fast_mode_scales_cache_prices(self):
         cost = cost_of(self.prices, "claude-opus-5-5", usage(input=1_000_000, output=1_000_000, read=1_000_000, fast=True))
-        # fast 輸入為一般的 2 倍，快取讀取依同比例
+        # Fast input is twice the regular rate; cache reads scale by the same ratio
         self.assertAlmostEqual(cost, 8 + 40 + 0.4)
 
     def test_fast_mode_without_fast_prices_is_unpriced(self):

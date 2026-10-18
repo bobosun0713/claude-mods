@@ -1,13 +1,13 @@
-"""以 Claude 官方價格頁更新內建價格表 scripts/prices.json。
+"""Update the bundled price list scripts/prices.json from the official Claude pricing page.
 
-用法：
-  python3 update_prices.py [--source <價格頁 Markdown 檔>] [--summary <輸出 Markdown 檔>]
+Usage:
+  python3 update_prices.py [--source <pricing page Markdown>] [--summary <output Markdown>]
 
-  --source   改讀本機的價格頁 Markdown（測試用）；省略時從官方文件下載
-  --summary  將價格變動摘要寫入檔案（供 PR 內文使用）
+  --source   read a local copy of the pricing page Markdown (for tests); downloads from the official docs when omitted
+  --summary  write a summary of price changes to a file (used as the PR body)
 
-模型列表以官方價格頁為準：新增、調整與官方已移除的模型都會反映在價格表中。
-價格無變動時不改寫檔案。價格頁無法解析時以結束代碼 1 結束，不改寫檔案。
+The official pricing page decides the model list: added, changed and removed models are all reflected.
+The file is not rewritten when nothing changed. If the page can't be parsed, exits with code 1 without rewriting.
 """
 
 import argparse
@@ -16,7 +16,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-# python3 -I 不會把腳本目錄放進 sys.path，手動加入以共用 scan.py 的轉換邏輯
+# python3 -I leaves the script's directory off sys.path; add it to share scan.py's parsing logic
 sys.path.insert(0, HERE)
 
 from scan import ONLINE_URL, fetch_page, from_official  # noqa: E402
@@ -33,7 +33,7 @@ def load_page(source):
 
 
 def render(data):
-    """每個模型一行，讓 diff 只顯示有變動的模型"""
+    """One model per line so a diff shows only the models that changed"""
     lines = ["{"]
     lines.append(f'  "_comment": {json.dumps(data["_comment"], ensure_ascii=False)},')
     lines.append('  "models": {')
@@ -71,7 +71,7 @@ def main():
 
     try:
         latest = from_official(load_page(args.source))
-    except (OSError, ValueError) as error:  # 連線失敗或頁面格式異常
+    except (OSError, ValueError) as error:  # Connection failed or the page format changed
         print(f"價格頁無法解析：{error}", file=sys.stderr)
         sys.exit(1)
 
