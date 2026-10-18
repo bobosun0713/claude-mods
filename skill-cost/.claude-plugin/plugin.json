@@ -1,7 +1,7 @@
 {
   "name": "skill-cost",
   "version": "0.2.0",
-  "description": "依 skill 與模型統計 Claude Code 的 token 用量與花費（本次 session、各資料夾、全部紀錄）",
+  "description": "Tracks Claude Code token usage and cost by skill and model (current session, per project directory, and all history)",
   "author": { "name": "bobosun0713" },
   "types": "./types/index.d.ts"
 }
