@@ -1,0 +1,37 @@
+name: Update model prices
+
+# 每天依 Claude 官方價格頁更新 skill-cost 的內建價格表；有變動才開 PR
+on:
+  schedule:
+    - cron: "0 1 * * *" # 每天 01:00 UTC（台灣時間 09:00）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Test price parsing
+        run: python3 -m unittest discover -s skill-cost/scripts
+
+      - name: Update prices
+        run: python3 -I skill-cost/scripts/update_prices.py --summary "$RUNNER_TEMP/prices-summary.md"
+
+      - name: Create pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: chore/update-model-prices
+          delete-branch: true
+          commit-message: "chore(skill-cost): update bundled model prices"
+          title: "chore(skill-cost): update bundled model prices"
+          body-path: ${{ runner.temp }}/prices-summary.md
+          add-paths: skill-cost/scripts/prices.json
