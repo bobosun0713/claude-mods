@@ -1,0 +1,5 @@
+# Claude Code 載入 mod 時自動產生的型別檔
+.claude-plugin/types/
+
+.DS_Store
+__pycache__/

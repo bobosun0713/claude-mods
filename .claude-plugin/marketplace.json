@@ -1,0 +1,14 @@
+{
+  "name": "claude-mods",
+  "description": "bobosun0713 的 Claude Code mods",
+  "owner": {
+    "name": "bobosun0713"
+  },
+  "plugins": [
+    {
+      "name": "skill-cost",
+      "source": "./skill-cost",
+      "description": "依 skill 與模型統計 Claude Code 的 token 用量與花費（本次 session、各資料夾、全部紀錄）"
+    }
+  ]
+}
