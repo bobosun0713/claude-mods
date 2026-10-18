@@ -1,23 +1,23 @@
-"""讀取 Claude Code 的對話紀錄，依資料夾、skill、模型彙總 token 與費用。
+"""Read Claude Code transcripts and total tokens and cost by folder, skill and model.
 
-用法：
-  python3 scan.py <projects 目錄> <內建價格表> <資料目錄> [--refresh]
-    stdin（可省略）：{ "<session id>": 實際費用 USD, ... }
-  python3 scan.py --prices <內建價格表> <資料目錄> [--refresh]
-    列出目前採用的價格與來源
+Usage:
+  python3 scan.py <projects dir> <bundled prices> <data dir> [--refresh]
+    stdin (optional): { "<session id>": actual cost in USD, ... }
+  python3 scan.py --prices <bundled prices> <data dir> [--refresh]
+    List the prices in use and their sources
 
-資料目錄（通常為 ~/.claude/skill-cost/）：
-  prices.json          使用者自訂價格，優先順序最高
-  online-prices.json   官方價格的快取（自動產生）
+Data dir (usually ~/.claude/skill-cost/):
+  prices.json          the user's custom prices, highest priority
+  online-prices.json   cache of official prices (generated)
 
-價格優先順序：使用者自訂 > 官方價格（Claude 官方文件，每天最多更新一次）> 內建價格表
+Price priority: custom > official (Claude docs, refreshed at most once a day) > bundled
 
-費用來源：
-  - session 有實際費用（mod 記錄的 /cost 金額）時，以實際金額為準，
-    skill 與模型間的分配沿用估算比例
-  - 其他 session 依目前的模型價格估算
+Cost source:
+  - A session with an actual cost (the /cost amount recorded by the mod) uses that amount;
+    the split across skills and models follows the estimated proportions
+  - Other sessions are estimated from current model prices
 
-輸出 JSON 到 stdout：
+Writes JSON to stdout:
   {
     "folders": { cwd: { rows, models, sessions, actualSessions, lastAt } },
     "unpriced": [model, ...],
@@ -32,22 +32,23 @@ import sys
 import time
 import urllib.request
 
-NO_SKILL = "（無 skill）"
-SUBAGENT = "（subagent）"
+# Language-neutral names; the mod translates them for display (hooks/register.tsx)
+NO_SKILL = "(no skill)"
+SUBAGENT = "(subagent)"
 
 SKILL_DIR = re.compile(r"Base directory for this skill: (\S+)")
 
 ONLINE_URL = "https://platform.claude.com/docs/en/about-claude/pricing.md"
-# 解析結果少於這個數量時視為頁面格式異常，沿用先前的價格
+# Fewer parsed models than this means the page format changed; keep the previous prices
 MIN_MODELS = 5
-# Python 預設的 User-Agent 會被文件站擋下（403），改用明確的識別字串
+# The docs site blocks Python's default User-Agent (403), so send an explicit one
 USER_AGENT = "skill-cost/0.1 (+https://github.com/bobosun0713/claude-mods)"
-# Claude Haiku 5.5 等模型的 prompt 超過此長度（含快取讀寫）時改用長 prompt 價格
+# Prompts longer than this (cache reads and writes included) use long-prompt rates on models such as Claude Haiku 5.5
 LONG_PROMPT = 100_000
 ONLINE_TTL = 24 * 60 * 60
 
 
-# ── 價格 ────────────────────────────────────────────────
+# ── Prices ──────────────────────────────────────────────
 
 
 def read_json(path):
@@ -64,7 +65,7 @@ def write_json(path, data):
 
 
 MONEY = re.compile(r"\$([\d.]+)")
-# 每個模型都必須有的價格欄位
+# Price fields every model must have
 PRICE_FIELDS = ("input", "output", "cacheRead", "cacheWrite5m", "cacheWrite1h")
 COLUMNS = {
     "base input tokens": "input",
@@ -92,7 +93,7 @@ def cells(line):
 
 
 def table(markdown, heading):
-    """取出標題（如 "## Model pricing"）底下第一張表格的列，不含分隔列"""
+    """Rows of the first table under a heading (such as "## Model pricing"), without the separator row"""
     if heading not in markdown:
         return []
     level = heading.split(" ", 1)[0]
@@ -107,7 +108,7 @@ def table(markdown, heading):
 
 
 def from_fast(markdown, models):
-    """解析「### Fast mode pricing」表格，存成各模型的 fastInput / fastOutput"""
+    """Parse the "### Fast mode pricing" table into each model's fastInput / fastOutput"""
     lines = table(markdown, "### Fast mode pricing")
     if len(lines) < 2:
         raise ValueError("找不到 Fast mode pricing 表格")
@@ -117,7 +118,7 @@ def from_fast(markdown, models):
         found = [MONEY.search(cell) for cell in prices[:2]]
         if not all(found):
             continue
-        # 一列可能列出多個模型，例如「Claude Opus 5 / Claude Opus 4.8」
+        # One row may list several models, such as "Claude Opus 5 / Claude Opus 4.8"
         for part in label.split("/"):
             name = model_id(part)
             if name in models:
@@ -126,7 +127,7 @@ def from_fast(markdown, models):
 
 
 def from_official(markdown):
-    """解析官方價格頁的 Model pricing 與 Fast mode pricing 表格，單位為美元 / 百萬 token"""
+    """Parse the Model pricing and Fast mode pricing tables of the official pricing page, in USD per million tokens"""
     lines = table(markdown, "## Model pricing")
     if len(lines) < 2:
         raise ValueError("找不到 Model pricing 表格")
@@ -164,13 +165,13 @@ def from_official(markdown):
 
 
 def latest(entry):
-    """相容舊格式：若為價格列表則取最後一筆"""
+    """Backward compatibility with the old format: if it is a list of prices, take the last one"""
     entry = entry[-1] if isinstance(entry, list) else entry
     return {key: value for key, value in entry.items() if key != "from"}
 
 
 def update_online(data_dir, force):
-    """更新官方價格快取，每天最多一次；失敗時沿用上次的快取"""
+    """Refresh the official price cache at most once a day; on failure keep the previous cache"""
     path = os.path.join(data_dir, "online-prices.json")
     cache = read_json(path) if os.path.isfile(path) else {"fetchedAt": 0, "models": {}}
 
@@ -179,7 +180,7 @@ def update_online(data_dir, force):
 
     try:
         models = from_official(fetch_page())
-    except Exception as error:  # 離線或來源異常時沿用快取
+    except Exception as error:  # Keep the cache when offline or the source is broken
         cache["error"] = f"{type(error).__name__}: {error}"
         return cache
 
@@ -189,22 +190,22 @@ def update_online(data_dir, force):
 
 
 def load_prices(builtin, data_dir, force=False):
-    """回傳 (價格表, 各模型來源, 網路快取狀態)"""
+    """Return (prices, source of each model, online cache status)"""
     prices = read_json(builtin)
-    sources = {name: "內建" for name in prices["models"]}
+    sources = {name: "bundled" for name in prices["models"]}
 
     online = update_online(data_dir, force)
     for name, entry in online.get("models", {}).items():
         prices["models"][name] = entry
-        sources[name] = "官方"
+        sources[name] = "official"
 
     override = os.path.join(data_dir, "prices.json")
     if os.path.isfile(override):
         custom = read_json(override)
-        # 自訂檔中列出的模型取代官方與內建價格
+        # Models listed in the custom file override official and bundled prices
         for name, entry in custom.get("models", {}).items():
             prices["models"][name] = entry
-            sources[name] = "自訂"
+            sources[name] = "custom"
 
     prices["models"] = {name: latest(entry) for name, entry in prices["models"].items()}
 
@@ -213,7 +214,7 @@ def load_prices(builtin, data_dir, force=False):
 
 
 def price_of(prices, model):
-    """依模型 ID 找價格：完全相同，或後面只接日期與 [1m] 之類的後綴"""
+    """Find a price by model ID: an exact match, or one followed only by a date or a suffix such as [1m]"""
     for key in sorted(prices["models"], key=len, reverse=True):
         if re.fullmatch(re.escape(key) + r"(-\d{8})?(\[[^\]]*\])?", model):
             return prices["models"][key]
@@ -221,7 +222,7 @@ def price_of(prices, model):
 
 
 def cost_of(prices, model, usage):
-    """依價格計算一次呼叫的費用；缺少需要的價格時回傳 None（列為無牌價）"""
+    """Cost of one call from prices; None when a needed price is missing (listed as unpriced)"""
     price = price_of(prices, model)
     if price is None:
         return None
@@ -232,7 +233,7 @@ def cost_of(prices, model, usage):
     if prompt > LONG_PROMPT and "above100k" in price:
         price = {**price, **price["above100k"]}
 
-    # fast mode：官方表格列出 fast 的輸入 / 輸出價格，快取價格依同樣比例套用
+    # Fast mode: the official table lists fast input / output rates; cache rates scale by the same ratio
     if usage.get("speed") == "fast":
         if "fastInput" not in price or "fastOutput" not in price:
             return None
@@ -260,11 +261,11 @@ def cost_of(prices, model, usage):
     return sum(count * price.get(key, 0) for key, count in counts.items()) / 1_000_000
 
 
-# ── 對話紀錄 ────────────────────────────────────────────
+# ── Transcripts ────────────────────────────────────────
 
 
 def is_prompt(entry):
-    """使用者自己送出的訊息（不是工具結果、不是 skill 展開）"""
+    """A message the user sent (not a tool result or a skill expansion)"""
     if entry.get("isMeta"):
         return False
     content = entry.get("message", {}).get("content")
@@ -285,9 +286,9 @@ def text_of(entry):
 
 
 def read_calls(path, is_subagent):
-    """回傳 (資料夾, 最後時間, [(model, usage, skill), ...])"""
+    """Return (folder, last time, [(model, usage, skill), ...])"""
     current = SUBAGENT if is_subagent else NO_SKILL
-    # 同一則回覆會拆成多行，各行帶同樣的 usage：以 message.id 去重，保留最後一行
+    # One response is split across several lines with the same usage: dedupe by message.id, keeping the last line
     calls = {}
     order = []
     folder = None
@@ -331,14 +332,14 @@ def read_calls(path, is_subagent):
             key = message.get("id") or entry.get("requestId") or entry.get("uuid")
             if key not in calls:
                 order.append(key)
-            # skill 以第一次看到這則回覆時為準
+            # The skill is the one active when the response is first seen
             skill = calls[key][2] if key in calls else current
             calls[key] = (model, usage, skill)
 
     return folder, last_at, [calls[key] for key in order]
 
 
-# ── 彙總 ────────────────────────────────────────────────
+# ── Totals ──────────────────────────────────────────────
 
 
 def blank():
@@ -355,9 +356,9 @@ def add(row, usd, usage):
 
 
 def add_session(folders, folder, last_at, priced, actual):
-    """priced：[(model, usage, skill, 估算費用)]；actual 為實際費用或 None"""
+    """priced: [(model, usage, skill, estimated cost)]; actual is the actual cost or None"""
     estimated = sum(usd for _, _, _, usd in priced)
-    # 有實際費用時按比例校正，保留 skill 與模型間的分配
+    # With an actual cost, scale proportionally, keeping the split across skills and models
     is_actual = actual is not None and estimated > 0
     factor = actual / estimated if is_actual else 1.0
 
@@ -378,7 +379,7 @@ def add_session(folders, folder, last_at, priced, actual):
 
 def list_prices(prices, sources, status):
     models = {
-        name: {"source": sources.get(name, "內建"), **price}
+        name: {"source": sources.get(name, "bundled"), **price}
         for name, price in sorted(prices["models"].items())
         if name.startswith("claude-")
     }
@@ -425,7 +426,7 @@ def main():
             session = name[: -len(".jsonl")]
             folder, last_at, calls = read_calls(os.path.join(base, name), False)
 
-            # subagent 可能在子目錄執行，算回所屬 session 的資料夾與實際費用
+            # Subagents may run in a subdirectory; count them toward their session's folder and actual cost
             agents = os.path.join(base, session, "subagents")
             if os.path.isdir(agents):
                 for agent in sorted(os.listdir(agents)):

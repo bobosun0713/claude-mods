@@ -10,7 +10,7 @@ Claude Code 擴充模組（mod）集合。每個 mod 皆為獨立的 Claude Code
 
 | 名稱 | 說明 | 版本 |
 | --- | --- | --- |
-| [skill-cost](./skill-cost/README.zh-TW.md) | 依 skill 與模型統計 token 用量及費用 | 0.1.0 |
+| [skill-cost](./skill-cost/README.zh-TW.md) | 依 skill 與模型統計 token 用量及費用 | 0.2.0 |
 
 各 mod 的功能、指令與限制，請參閱其目錄下的 `README.zh-TW.md`。
 

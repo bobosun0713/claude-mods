@@ -10,7 +10,7 @@ This repository is also a plugin marketplace, so you can install each mod indivi
 
 | Name | Description | Version |
 | --- | --- | --- |
-| [skill-cost](./skill-cost/README.md) | Token usage and cost broken down by skill and model | 0.1.0 |
+| [skill-cost](./skill-cost/README.md) | Token usage and cost broken down by skill and model | 0.2.0 |
 
 See the `README.md` in each mod's directory for its features, commands, and limitations.
 

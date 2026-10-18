@@ -4,7 +4,7 @@ English | [繁體中文](./README.zh-TW.md)
 
 Tracks Claude Code token usage and cost by skill and model, for the current session, each project directory, and your entire history.
 
-> The mod's command output and summary line are in Traditional Chinese.
+> Command output and the summary line are in Traditional Chinese by default. Run `/skill-cost lang en` to switch to English.
 
 ## Installation
 
@@ -28,6 +28,7 @@ Tracks Claude Code token usage and cost by skill and model, for the current sess
 | `/skill-cost reset` | Reset the current session's statistics |
 | `/skill-cost hide` | Hide the summary line above the prompt |
 | `/skill-cost show` | Show the summary line above the prompt |
+| `/skill-cost lang [en\|zh]` | Switch reports and the summary line between English and Traditional Chinese; with no argument, toggles. The choice is kept across sessions |
 
 ### Summary line
 
@@ -45,7 +46,7 @@ Each scope has two tables.
 
 | Column | Description |
 | --- | --- |
-| Skill | Skill name. `（無 skill）` is calls made with no skill loaded, `（subagent）` is subagent calls, and `（載入前）` is cost incurred before the mod loaded |
+| Skill | Skill name. `(no skill)` is calls made with no skill loaded, `(subagent)` is subagent calls, and `(before load)` is cost incurred before the mod loaded (shown as `（無 skill）`, `（subagent）` and `（載入前）` in Chinese) |
 | 金額(USD) | Cost in US dollars |
 | 占比 | Share of the scope's total cost |
 | 次數 | Number of model calls |
@@ -154,8 +155,9 @@ Create `~/.claude/skill-cost/prices.json` (or `$CLAUDE_CONFIG_DIR/skill-cost/pri
 
 - History covers only transcripts still kept on this machine.
 - Actual costs are saved only on the machine where the mod is installed; the same transcripts on another machine are estimated.
-- In Claude Code environments managed by an organization, the `skill.prompt` event isn't delivered to plugins you install yourself, so the current session's cost all counts toward `（無 skill）`. History is unaffected.
+- In Claude Code environments managed by an organization, the `skill.prompt` event isn't delivered to plugins you install yourself, so the current session's cost all counts toward `(no skill)`. History is unaffected.
 - History scan results are cached for 60 seconds, so repeated queries in that window don't rescan; use `/skill-cost scan` to update immediately.
+- After `/skill-cost lang`, the command's description in the `/` menu changes from the next session. Error details passed through from `scripts/scan.py` (such as a failed price parse) stay in Chinese.
 
 ## Files
 

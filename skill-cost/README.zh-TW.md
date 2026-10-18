@@ -26,6 +26,7 @@
 | `/skill-cost reset` | 重設目前 session 的統計 |
 | `/skill-cost hide` | 隱藏輸入框上方的摘要列 |
 | `/skill-cost show` | 顯示輸入框上方的摘要列 |
+| `/skill-cost lang [en\|zh]` | 切換報表與摘要列的語言（英文 / 繁體中文），未指定時在兩者間切換；設定跨 session 保存 |
 
 ### 摘要列
 
@@ -154,6 +155,7 @@ skill 載入後（透過 Skill 工具或 slash command），至使用者送出�
 - 實際費用僅保存於安裝本 mod 的電腦；同一份對話紀錄在其他電腦上會以估算計算。
 - 由組織管理的 Claude Code 環境中，`skill.prompt` 事件不會傳遞給自行安裝的 plugin，此時目前 session 的費用將全數歸入 `（無 skill）`；歷史統計不受影響。
 - 歷史掃描結果會快取 60 秒，期間內重複查詢不會重新掃描；如需立即更新請使用 `/skill-cost scan`。
+- 執行 `/skill-cost lang` 後，`/` 選單中的指令說明會於下一個 session 才變更；由 `scripts/scan.py` 傳回的錯誤細節（例如價格解析失敗）維持中文。
 
 ## 檔案說明
 

@@ -1,21 +1,115 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register, TurnUsage } from 'claude-code'
 
-import type { CostRow, FolderRecord, History, Ledger, ModelRow, ModelRows, OnlineStatus, Rows } from '../types'
+import type { CostRow, FolderRecord, History, Lang, Ledger, ModelRow, ModelRows, OnlineStatus, Rows } from '../types'
 
-const NO_SKILL = '（無 skill）'
-const BEFORE = '（載入前）'
-const UNKNOWN_MODEL = '（未知模型）'
-const HELP = [
-  '其他用法：',
-  '  /skill-cost all     全部使用紀錄（所有資料夾合併，含各資料夾排行）',
-  '  /skill-cost scan    更新官方價格並重新掃描，顯示全部使用紀錄',
-  '  /skill-cost prices  目前採用的模型價格與來源',
-  '  /skill-cost reset   本次 session 歸零',
-  '  /skill-cost hide    隱藏提示列（show 顯示）',
-].join('\n')
+// Language-neutral names kept in data; shown through label(). NO_SKILL and SUBAGENT match scripts/scan.py
+const NO_SKILL = '(no skill)'
+const SUBAGENT = '(subagent)'
+const BEFORE = '(before load)'
+const UNKNOWN_MODEL = '(unknown model)'
 
-// 距上次掃描超過這麼久，開面板時重新掃描
+// ── Language ────────────────────────────────────────────
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`
+
+const TEXT = {
+  zh: {
+    help: [
+      '其他用法：',
+      '  /skill-cost all     全部使用紀錄（所有資料夾合併，含各資料夾排行）',
+      '  /skill-cost scan    更新官方價格並重新掃描，顯示全部使用紀錄',
+      '  /skill-cost prices  目前採用的模型價格與來源',
+      '  /skill-cost reset   本次 session 歸零',
+      '  /skill-cost hide    隱藏提示列（show 顯示）',
+      '  /skill-cost lang    切換中文 / English（lang en、lang zh 指定）',
+    ].join('\n'),
+    description: '依 skill 與模型列出花費（all 全部紀錄、scan 重新掃描、prices 價格表、reset 歸零本次、hide/show 提示列、lang 切換語言）',
+    empty: '（尚無紀錄）',
+    summary: (cost: string, skills: number, models: number) => `${cost} · ${skills} 種 skill · ${models} 種模型`,
+    allActual: (sessions: number) => `${sessions} 個 session，皆為實際費用`,
+    mixed: (sessions: number, actual: number) => `${sessions} 個 session，${actual} 個實際、${sessions - actual} 個估算`,
+    estimated: (sessions: number) => `${sessions} 個 session，估算`,
+    scanning: '（掃描對話紀錄中…）',
+    scanFailed: (error: string) => `（掃描失敗：${error}）`,
+    unpriced: (models: string) => `${models} 無牌價，金額未計`,
+    onlineFailed: '官方價格更新失敗，沿用先前價格',
+    notes: (notes: string[]) => `（${notes.join('；')}）`,
+    session: (summary: string) => `本次 session（實際金額）：${summary}`,
+    folder: (basis: string, folder: string, summary: string, note: string) => `此資料夾歷來（${basis}）${folder}：${summary} ${note}`,
+    noFolders: (note: string) => `還沒有任何資料夾的紀錄。${note}`,
+    all: (folders: number, basis: string, summary: string, note: string) => `全部使用紀錄（${folders} 個資料夾，${basis}）：${summary} ${note}`,
+    byFolder: '各資料夾：',
+    fetched: (hours: number) => `官方價格更新於 ${hours} 小時前`,
+    notFetched: '尚未取得官方價格',
+    fetchFailed: (error: string) => `；最近一次更新失敗：${error}`,
+    prices: (fetched: string) => `目前採用的價格（USD / 百萬 token）。${fetched}`,
+    priority: '優先順序：自訂 > 官方 > 內建；自訂檔位於 ~/.claude/skill-cost/prices.json',
+    pricesFailed: (error: string) => `無法讀取價格：${error}`,
+    reset: '本次 session 已歸零。',
+    hidden: '已隱藏提示列。',
+    shown: '已顯示提示列。',
+    switched: '已切換為中文。',
+    badLang: (arg: string) => `不支援的語言：${arg}（可用 zh、en）`,
+    band: (summary: string, folder: string) => `本次 ${summary} · 此資料夾歷來 ≈${folder} · /skill-cost 看明細`,
+  },
+  en: {
+    help: [
+      'More commands:',
+      '  /skill-cost all     Entire history (all folders combined, with a folder ranking)',
+      '  /skill-cost scan    Refresh official prices, rescan, and show the entire history',
+      '  /skill-cost prices  Model prices in use and their sources',
+      '  /skill-cost reset   Reset this session',
+      '  /skill-cost hide    Hide the summary line (show to show it)',
+      '  /skill-cost lang    Switch between 中文 and English (lang en, lang zh to pick)',
+    ].join('\n'),
+    description: 'Cost by skill and model (all: entire history, scan: rescan, prices: price list, reset: reset session, hide/show: summary line, lang: switch language)',
+    empty: '(no records yet)',
+    summary: (cost: string, skills: number, models: number) => `${cost} · ${plural(skills, 'skill')} · ${plural(models, 'model')}`,
+    allActual: (sessions: number) => `${plural(sessions, 'session')}, all actual`,
+    mixed: (sessions: number, actual: number) => `${plural(sessions, 'session')}: ${actual} actual, ${sessions - actual} estimated`,
+    estimated: (sessions: number) => `${plural(sessions, 'session')}, estimated`,
+    scanning: '(scanning transcripts…)',
+    scanFailed: (error: string) => `(scan failed: ${error})`,
+    unpriced: (models: string) => `${models} unpriced, cost not counted`,
+    onlineFailed: 'official price update failed, using previous prices',
+    notes: (notes: string[]) => `(${notes.join('; ')})`,
+    session: (summary: string) => `This session (actual cost): ${summary}`,
+    folder: (basis: string, folder: string, summary: string, note: string) => `This folder, all time (${basis}) ${folder}: ${summary} ${note}`,
+    noFolders: (note: string) => `No folder records yet. ${note}`,
+    all: (folders: number, basis: string, summary: string, note: string) => `Entire history (${plural(folders, 'folder')}, ${basis}): ${summary} ${note}`,
+    byFolder: 'By folder:',
+    fetched: (hours: number) => `Official prices updated ${plural(hours, 'hour')} ago`,
+    notFetched: 'Official prices not fetched yet',
+    fetchFailed: (error: string) => `; last update failed: ${error}`,
+    prices: (fetched: string) => `Prices in use (USD / million tokens). ${fetched}`,
+    priority: 'Priority: custom > official > bundled; custom file at ~/.claude/skill-cost/prices.json',
+    pricesFailed: (error: string) => `Could not read prices: ${error}`,
+    reset: 'This session has been reset.',
+    hidden: 'Summary line hidden.',
+    shown: 'Summary line shown.',
+    switched: 'Switched to English.',
+    badLang: (arg: string) => `Unsupported language: ${arg} (use zh or en)`,
+    band: (summary: string, folder: string) => `This session ${summary} · this folder all time ≈${folder} · /skill-cost for details`,
+  },
+} satisfies Record<Lang, unknown>
+
+/** Display names of the special skill and model names and the price sources */
+const NAMES: Record<string, Record<Lang, string>> = {
+  [NO_SKILL]: { zh: '（無 skill）', en: '(no skill)' },
+  [SUBAGENT]: { zh: '（subagent）', en: '(subagent)' },
+  [BEFORE]: { zh: '（載入前）', en: '(before load)' },
+  [UNKNOWN_MODEL]: { zh: '（未知模型）', en: '(unknown model)' },
+  bundled: { zh: '內建', en: 'bundled' },
+  official: { zh: '官方', en: 'official' },
+  custom: { zh: '自訂', en: 'custom' },
+}
+
+const label = (name: string, lang: Lang) => NAMES[name]?.[lang] ?? name
+
+export const isLang = (value: unknown): value is Lang => value === 'zh' || value === 'en'
+
+// Rescan when a report is opened this long after the last scan
 const RESCAN_MS = 60_000
 const EMPTY: Ledger = { lastUsd: null, rows: {}, models: {} }
 
@@ -23,6 +117,10 @@ const ledger = atom({ plugin: 'skill-cost', key: 'ledger' } as const, EMPTY)
 const isHidden = atom({ plugin: 'skill-cost', key: 'isHidden' } as const, false)
 const history = atom({ plugin: 'skill-cost', key: 'history' } as const, null as History | null)
 const isScanning = atom({ plugin: 'skill-cost', key: 'isScanning' } as const, false)
+const lang = atom({ plugin: 'skill-cost', key: 'lang' } as const, 'zh' as Lang)
+
+// The language setting is kept across sessions
+const LANG_KEY = 'lang'
 
 const blankRow = (): CostRow => ({ usd: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, steps: 0 })
 
@@ -49,17 +147,17 @@ const addModel = (models: ModelRows | undefined, model: string, skill: string, s
   }
 }
 
-/** 表格內的金額：表頭已標 USD */
+/** Amount inside a table: the header already says USD */
 const usd = (n: number) => `$${n.toFixed(n < 1 ? 3 : 2)}`
 
-/** 表格外的金額：沒有表頭，註明美金 */
+/** Amount outside a table: no header, so mark it as US dollars */
 const usdLabel = (n: number) => `US${usd(n)}`
 
 const tokens = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`)
 
 const percent = (part: number, sum: number) => (sum > 0 ? `${Math.round((part / sum) * 100)}%` : '')
 
-/** 終端機顯示寬度：中日韓與全形字元佔兩格 */
+/** Terminal display width: CJK and full-width characters take two cells */
 const width = (text: string) => [...text].reduce((sum, ch) => sum + ((ch.codePointAt(0) ?? 0) >= 0x2e80 ? 2 : 1), 0)
 
 export const padEnd = (text: string, size: number) => text + ' '.repeat(Math.max(0, size - width(text)))
@@ -72,10 +170,10 @@ const skillCount = (rows: Rows) => Object.keys(rows).filter(name => name !== NO_
 
 const total = (rows: Rows) => Object.values(rows).reduce((sum, row) => sum + row.usd, 0)
 
-/** 一次模型呼叫的用量；金額取 session 累計值的差額 */
+/** Usage of one model call; the cost is the change in the session's running total */
 export const stepRow = (state: Ledger, sessionUsd: number, usage: TurnUsage | null): CostRow => {
   const base = state.lastUsd ?? sessionUsd
-  // 累計值變小代表 /clear 重新計算，從新的基準開始
+  // A smaller running total means /clear restarted the count, so start from the new baseline
   const delta = sessionUsd >= base ? sessionUsd - base : sessionUsd
 
   return {
@@ -88,7 +186,7 @@ export const stepRow = (state: Ledger, sessionUsd: number, usage: TurnUsage | nu
   }
 }
 
-/** 把一次模型呼叫的花費記到 skill 與模型名下 */
+/** Charge one model call's cost to its skill and model */
 export const charge = (state: Ledger, skill: string, model: string, sessionUsd: number, usage: TurnUsage | null): Ledger => {
   const step = stepRow(state, sessionUsd, usage)
 
@@ -99,7 +197,7 @@ export const charge = (state: Ledger, skill: string, model: string, sessionUsd: 
   }
 }
 
-/** 把 session 總花費中沒被記到的部分（mod 載入前）補成一列 */
+/** Add a row for the part of the session's total cost not yet recorded (before the mod loaded) */
 export const withGap = (state: Ledger, sessionUsd: number): Ledger => {
   const gap = sessionUsd - total(state.rows)
 
@@ -110,49 +208,67 @@ export const withGap = (state: Ledger, sessionUsd: number): Ledger => {
   return { ...state, rows: { ...state.rows, [BEFORE]: addRow(state.rows[BEFORE], { ...blankRow(), usd: gap }) } }
 }
 
-// ── 表格 ────────────────────────────────────────────────
+// ── Tables ──────────────────────────────────────────────
 
 /**
- * `keep`：數字越小越先隱藏，0 永不隱藏；`isFlex`：分到剩下的寬度，太長換行
+ * `keep`: lower numbers are hidden first, 0 is never hidden; `isFlex`: takes the remaining width and wraps long text
  */
 type Column = { title: string; width: number; isRight?: boolean; keep?: number; isFlex?: boolean }
 
-type Table = { columns: Column[]; rows: string[][] }
+type Table = { columns: Column[]; rows: string[][]; lang?: Lang }
+
+/** Column title and width per language; the width always fits the title */
+type LocalColumn = Omit<Column, 'title' | 'width'> & { title: Record<Lang, string>; width: number | Record<Lang, number> }
+
+const columnsOf = (columns: LocalColumn[], lang: Lang): Column[] =>
+  columns.map(column => {
+    const size = typeof column.width === 'number' ? column.width : column.width[lang]
+
+    return { ...column, title: column.title[lang], width: Math.max(size, width(column.title[lang])) }
+  })
 
 const GAP = 2
 
-const SKILL_COLUMNS: Column[] = [
-  { title: 'Skill', width: 14, isFlex: true, keep: 0 },
-  { title: '金額(USD)', width: 10, isRight: true, keep: 0 },
-  { title: '占比', width: 4, isRight: true, keep: 4 },
-  { title: '次數', width: 4, isRight: true, keep: 5 },
-  { title: '輸入', width: 6, isRight: true, keep: 1 },
-  { title: '輸出', width: 6, isRight: true, keep: 6 },
-  { title: '快取讀', width: 6, isRight: true, keep: 3 },
-  { title: '快取寫', width: 6, isRight: true, keep: 2 },
+const COST = { zh: '金額(USD)', en: 'Cost(USD)' }
+const SHARE = { zh: '占比', en: 'Share' }
+const CALLS = { zh: '次數', en: 'Calls' }
+const INPUT = { zh: '輸入', en: 'Input' }
+const OUTPUT = { zh: '輸出', en: 'Output' }
+const CACHE_READ = { zh: '快取讀', en: 'Cache R' }
+const MODEL = { zh: '模型', en: 'Model' }
+
+const SKILL_COLUMNS: LocalColumn[] = [
+  { title: { zh: 'Skill', en: 'Skill' }, width: 14, isFlex: true, keep: 0 },
+  { title: COST, width: 10, isRight: true, keep: 0 },
+  { title: SHARE, width: 4, isRight: true, keep: 4 },
+  { title: CALLS, width: 4, isRight: true, keep: 5 },
+  { title: INPUT, width: 6, isRight: true, keep: 1 },
+  { title: OUTPUT, width: 6, isRight: true, keep: 6 },
+  { title: CACHE_READ, width: 6, isRight: true, keep: 3 },
+  { title: { zh: '快取寫', en: 'Cache W' }, width: 6, isRight: true, keep: 2 },
 ]
 
-const MODEL_COLUMNS: Column[] = [
-  { title: '模型', width: 16, keep: 0 },
-  { title: '金額(USD)', width: 10, isRight: true, keep: 0 },
-  { title: '占比', width: 4, isRight: true, keep: 3 },
-  { title: '次數', width: 4, isRight: true, keep: 4 },
-  { title: '輸出', width: 6, isRight: true, keep: 2 },
-  { title: '快取讀', width: 6, isRight: true, keep: 1 },
-  { title: '在哪些 skill 下呼叫', width: 16, isFlex: true, keep: 0 },
+const MODEL_COLUMNS: LocalColumn[] = [
+  { title: MODEL, width: 16, keep: 0 },
+  { title: COST, width: 10, isRight: true, keep: 0 },
+  { title: SHARE, width: 4, isRight: true, keep: 3 },
+  { title: CALLS, width: 4, isRight: true, keep: 4 },
+  { title: OUTPUT, width: 6, isRight: true, keep: 2 },
+  { title: CACHE_READ, width: 6, isRight: true, keep: 1 },
+  { title: { zh: '在哪些 skill 下呼叫', en: 'Called under skills' }, width: 16, isFlex: true, keep: 0 },
 ]
 
-const FOLDER_COLUMNS: Column[] = [
-  { title: '金額(USD)', width: 10, isRight: true, keep: 0 },
-  { title: 'Skill', width: 5, isRight: true, keep: 2 },
-  { title: '模型', width: 4, isRight: true, keep: 1 },
-  { title: 'Session', width: 7, isRight: true, keep: 3 },
-  { title: '資料夾', width: 16, isFlex: true, keep: 0 },
+const FOLDER_COLUMNS: LocalColumn[] = [
+  { title: COST, width: 10, isRight: true, keep: 0 },
+  { title: { zh: 'Skill', en: 'Skills' }, width: 5, isRight: true, keep: 2 },
+  { title: { zh: '模型', en: 'Models' }, width: 4, isRight: true, keep: 1 },
+  { title: { zh: 'Session', en: 'Sessions' }, width: 7, isRight: true, keep: 3 },
+  { title: { zh: '資料夾', en: 'Folder' }, width: 16, isFlex: true, keep: 0 },
 ]
 
 const spanOf = (columns: Column[]) => columns.reduce((sum, column) => sum + column.width, 0) + GAP * Math.max(0, columns.length - 1)
 
-/** 依可用寬度隱藏次要欄位，彈性欄位分到剩下的寬度 */
+/** Hide lower-priority columns to fit the available width; flex columns take what is left */
 export const fit = (table: Table, room: number): Table => {
   let picked = table.columns.map((column, index) => ({ column, index }))
 
@@ -173,16 +289,17 @@ export const fit = (table: Table, room: number): Table => {
     column.isFlex && flexCount > 0 ? { ...column, width: column.width + Math.floor(spare / flexCount) } : column,
   )
 
-  return { columns, rows: table.rows.map(cells => picked.map(one => cells[one.index] ?? '')) }
+  return { ...table, columns, rows: table.rows.map(cells => picked.map(one => cells[one.index] ?? '')) }
 }
 
-export const skillTable = (rows: Rows): Table => {
+export const skillTable = (rows: Rows, lang: Lang = 'zh'): Table => {
   const sum = total(rows)
 
   return {
-    columns: SKILL_COLUMNS,
+    lang,
+    columns: columnsOf(SKILL_COLUMNS, lang),
     rows: byCost(rows).map(([name, row]) => [
-      name,
+      label(name, lang),
       usd(row.usd),
       percent(row.usd, sum),
       String(row.steps),
@@ -194,31 +311,33 @@ export const skillTable = (rows: Rows): Table => {
   }
 }
 
-const skillsOf = (row: ModelRow) =>
+const skillsOf = (row: ModelRow, lang: Lang) =>
   Object.entries(row.skills)
     .sort(([, a], [, b]) => b - a)
-    .map(([name, count]) => `${name}×${count}`)
+    .map(([name, count]) => `${label(name, lang)}×${count}`)
     .join(', ')
 
-export const modelTable = (models: ModelRows): Table => {
+export const modelTable = (models: ModelRows, lang: Lang = 'zh'): Table => {
   const sum = Object.values(models).reduce((acc, row) => acc + row.usd, 0)
 
   return {
-    columns: MODEL_COLUMNS,
+    lang,
+    columns: columnsOf(MODEL_COLUMNS, lang),
     rows: byCost(models).map(([name, row]) => [
-      name,
+      label(name, lang),
       usd(row.usd),
       percent(row.usd, sum),
       String(row.steps),
       tokens(row.output),
       tokens(row.cacheRead),
-      skillsOf(row),
+      skillsOf(row, lang),
     ]),
   }
 }
 
-const folderTable = (records: FolderRecord[]): Table => ({
-  columns: FOLDER_COLUMNS,
+const folderTable = (records: FolderRecord[], lang: Lang): Table => ({
+  lang,
+  columns: columnsOf(FOLDER_COLUMNS, lang),
   rows: records.map(one => [
     usd(total(one.rows)),
     String(skillCount(one.rows)),
@@ -228,7 +347,7 @@ const folderTable = (records: FolderRecord[]): Table => ({
   ]),
 })
 
-/** 依顯示寬度切成多段，給換行的欄位用；優先在「, 」與「/」後斷行 */
+/** Split text into pieces by display width for wrapping columns; prefer breaking after ", " and "/" */
 export const chunk = (text: string, size: number): string[] => {
   const parts: string[] = []
   let line = ''
@@ -239,7 +358,7 @@ export const chunk = (text: string, size: number): string[] => {
       line = ''
     }
 
-    // 單一段本身就超過寬度時，逐字切
+    // A single piece wider than the column is split character by character
     for (const ch of word) {
       if (width(line + ch) > size) {
         parts.push(line)
@@ -257,12 +376,12 @@ export const chunk = (text: string, size: number): string[] => {
 
 export type TableLine = { kind: 'head' | 'rule' | 'row' | 'empty'; text: string; row?: number }
 
-/** 把表格排成一行一行的文字：先依寬度取捨欄位，太長的欄位換行 */
+/** Lay a table out as lines of text: pick columns by width first, then wrap long cells */
 export const tableLines = (table: Table, room: number): TableLine[] => {
   const { columns, rows } = fit(table, room)
 
   if (rows.length === 0) {
-    return [{ kind: 'empty', text: '（尚無紀錄）' }]
+    return [{ kind: 'empty', text: TEXT[table.lang ?? 'zh'].empty }]
   }
 
   const cell = (text: string, column: Column) => (column.isRight ? padStart(text, column.width) : padEnd(text, column.width))
@@ -290,53 +409,60 @@ export const tableLines = (table: Table, room: number): TableLine[] => {
   ]
 }
 
-/** 純文字表格，給指令輸出用 */
+/** Plain-text table for command output */
 export const tableText = (table: Table, room = 110) =>
   tableLines(table, room)
     .map(line => `  ${line.text}`)
     .join('\n')
 
-const summary = (rows: Rows, models: ModelRows) =>
-  `${usdLabel(total(rows))} · ${skillCount(rows)} 種 skill · ${Object.keys(models).length} 種模型`
+const summary = (rows: Rows, models: ModelRows, lang: Lang = 'zh') =>
+  TEXT[lang].summary(usdLabel(total(rows)), skillCount(rows), Object.keys(models).length)
 
-/** 說明幾個 session 是實際費用、幾個是估算 */
-export const basis = (sessions: number, actual: number) =>
-  actual >= sessions ? `${sessions} 個 session，皆為實際費用` : actual > 0 ? `${sessions} 個 session，${actual} 個實際、${sessions - actual} 個估算` : `${sessions} 個 session，估算`
+/** Describe how many sessions use actual cost and how many are estimated */
+export const basis = (sessions: number, actual: number, lang: Lang = 'zh') =>
+  actual >= sessions ? TEXT[lang].allActual(sessions) : actual > 0 ? TEXT[lang].mixed(sessions, actual) : TEXT[lang].estimated(sessions)
 
-const historyNote = (data: History | null) => {
+const historyNote = (data: History | null, lang: Lang) => {
+  const t = TEXT[lang]
+
   if (!data) {
-    return '（掃描對話紀錄中…）'
+    return t.scanning
   }
 
   if (data.error) {
-    return `（掃描失敗：${data.error}）`
+    return t.scanFailed(data.error)
   }
 
   const notes = [
-    ...(data.unpriced.length ? [`${data.unpriced.join(', ')} 無牌價，金額未計`] : []),
-    ...(data.online?.error ? ['官方價格更新失敗，沿用先前價格'] : []),
+    ...(data.unpriced.length ? [t.unpriced(data.unpriced.join(', '))] : []),
+    ...(data.online?.error ? [t.onlineFailed] : []),
   ]
 
-  return notes.length ? `（${notes.join('；')}）` : ''
+  return notes.length ? t.notes(notes) : ''
 }
 
-export const report = (session: Ledger, folder: string, data: History | null) => {
+export const report = (session: Ledger, folder: string, data: History | null, lang: Lang = 'zh') => {
+  const t = TEXT[lang]
   const record = data?.folders.find(one => one.folder === folder)
 
   return [
-    `本次 session（實際金額）：${summary(session.rows, session.models ?? {})}`,
-    tableText(skillTable(session.rows)),
+    t.session(summary(session.rows, session.models ?? {}, lang)),
+    tableText(skillTable(session.rows, lang)),
     '',
-    tableText(modelTable(session.models ?? {})),
+    tableText(modelTable(session.models ?? {}, lang)),
     '',
-    `此資料夾歷來（${basis(record?.sessions ?? 0, record?.actualSessions ?? 0)}）${folder}：${summary(record?.rows ?? {}, record?.models ?? {})} ${historyNote(data)}`,
-    tableText(skillTable(record?.rows ?? {})),
+    t.folder(
+      basis(record?.sessions ?? 0, record?.actualSessions ?? 0, lang),
+      folder,
+      summary(record?.rows ?? {}, record?.models ?? {}, lang),
+      historyNote(data, lang),
+    ),
+    tableText(skillTable(record?.rows ?? {}, lang)),
     '',
-    tableText(modelTable(record?.models ?? {})),
+    tableText(modelTable(record?.models ?? {}, lang)),
   ].join('\n')
 }
-
-/** 把所有資料夾的 skill 與模型用量合併成一份 */
+/** Merge the skill and model usage of every folder into one */
 export const mergeFolders = (folders: FolderRecord[]) => {
   const rows: Rows = {}
   const models: ModelRows = {}
@@ -366,25 +492,27 @@ export const mergeFolders = (folders: FolderRecord[]) => {
   }
 }
 
-export const folderReport = (data: History | null) => {
+export const folderReport = (data: History | null, lang: Lang = 'zh') => {
+  const t = TEXT[lang]
+
   if (!data || data.folders.length === 0) {
-    return `還沒有任何資料夾的紀錄。${historyNote(data)}`
+    return t.noFolders(historyNote(data, lang))
   }
 
   const all = mergeFolders(data.folders)
 
   return [
-    `全部使用紀錄（${data.folders.length} 個資料夾，${basis(all.sessions, all.actualSessions)}）：${summary(all.rows, all.models)} ${historyNote(data)}`,
-    tableText(skillTable(all.rows)),
+    t.all(data.folders.length, basis(all.sessions, all.actualSessions, lang), summary(all.rows, all.models, lang), historyNote(data, lang)),
+    tableText(skillTable(all.rows, lang)),
     '',
-    tableText(modelTable(all.models)),
+    tableText(modelTable(all.models, lang)),
     '',
-    '各資料夾：',
-    tableText(folderTable(data.folders)),
+    t.byFolder,
+    tableText(folderTable(data.folders, lang)),
   ].join('\n')
 }
 
-// ── 價格 ────────────────────────────────────────────────
+// ── Prices ──────────────────────────────────────────────
 
 const configDir = async ($: EngineInterface) => (await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${await $.env.get('HOME')}/.claude`
 
@@ -399,33 +527,33 @@ export type PriceRow = {
   fastOutput?: number
 }
 
-const PRICE_COLUMNS: Column[] = [
-  { title: '模型', width: 18, isFlex: true, keep: 0 },
-  { title: '來源', width: 4, keep: 5 },
-  { title: '輸入', width: 6, isRight: true, keep: 0 },
-  { title: '輸出', width: 6, isRight: true, keep: 0 },
-  { title: '快取讀', width: 6, isRight: true, keep: 4 },
-  { title: '寫 5m', width: 6, isRight: true, keep: 3 },
-  { title: '寫 1h', width: 6, isRight: true, keep: 2 },
-  { title: 'Fast 入/出', width: 10, isRight: true, keep: 1 },
+const PRICE_COLUMNS: LocalColumn[] = [
+  { title: MODEL, width: 18, isFlex: true, keep: 0 },
+  { title: { zh: '來源', en: 'Source' }, width: { zh: 4, en: 8 }, keep: 5 },
+  { title: INPUT, width: 6, isRight: true, keep: 0 },
+  { title: OUTPUT, width: 6, isRight: true, keep: 0 },
+  { title: CACHE_READ, width: 6, isRight: true, keep: 4 },
+  { title: { zh: '寫 5m', en: 'Write 5m' }, width: 6, isRight: true, keep: 3 },
+  { title: { zh: '寫 1h', en: 'Write 1h' }, width: 6, isRight: true, keep: 2 },
+  { title: { zh: 'Fast 入/出', en: 'Fast in/out' }, width: 10, isRight: true, keep: 1 },
 ]
 
 const rate = (n: number | undefined) => (n === undefined ? '—' : `${n}`)
 
-export const priceReport = (models: Record<string, PriceRow>, online: OnlineStatus | undefined, now: number) => {
-  const fetched = online?.fetchedAt
-    ? `官方價格更新於 ${Math.max(0, Math.round((now / 1000 - online.fetchedAt) / 3600))} 小時前`
-    : '尚未取得官方價格'
-  const failed = online?.error ? `；最近一次更新失敗：${online.error}` : ''
+export const priceReport = (models: Record<string, PriceRow>, online: OnlineStatus | undefined, now: number, lang: Lang = 'zh') => {
+  const t = TEXT[lang]
+  const fetched = online?.fetchedAt ? t.fetched(Math.max(0, Math.round((now / 1000 - online.fetchedAt) / 3600))) : t.notFetched
+  const failed = online?.error ? t.fetchFailed(online.error) : ''
 
   return [
-    `目前採用的價格（USD / 百萬 token）。${fetched}${failed}`,
-    '優先順序：自訂 > 官方 > 內建；自訂檔位於 ~/.claude/skill-cost/prices.json',
+    t.prices(`${fetched}${failed}`),
+    t.priority,
     tableText({
-      columns: PRICE_COLUMNS,
+      lang,
+      columns: columnsOf(PRICE_COLUMNS, lang),
       rows: Object.entries(models).map(([name, row]) => [
         name,
-        row.source,
+        label(row.source, lang),
         rate(row.input),
         rate(row.output),
         rate(row.cacheRead),
@@ -437,7 +565,7 @@ export const priceReport = (models: Record<string, PriceRow>, online: OnlineStat
   ].join('\n')
 }
 
-const listPrices = async ($: EngineInterface) => {
+const listPrices = async ($: EngineInterface, lang: Lang) => {
   const config = await configDir($)
   const { exitCode, stdout, stderr } = await $.process.run(
     ['python3', '-I', `${$.plugin.root}/scripts/scan.py`, '--prices', `${$.plugin.root}/scripts/prices.json`, `${config}/skill-cost`],
@@ -445,15 +573,15 @@ const listPrices = async ($: EngineInterface) => {
   )
 
   if (exitCode !== 0) {
-    return `無法讀取價格：${stderr.trim().split('\n').pop() ?? `exit ${exitCode}`}`
+    return TEXT[lang].pricesFailed(stderr.trim().split('\n').pop() ?? `exit ${exitCode}`)
   }
 
   const { models, online } = JSON.parse(stdout) as { models: Record<string, PriceRow>; online?: OnlineStatus }
 
-  return priceReport(models, online, await $.clock.now())
+  return priceReport(models, online, await $.clock.now(), lang)
 }
 
-// ── 掃描對話紀錄 ────────────────────────────────────────
+// ── Transcript scan ────────────────────────────────────────
 
 type ScanOutput = {
   folders: Record<string, Omit<FolderRecord, 'folder'>>
@@ -470,14 +598,14 @@ export const toHistory = (output: ScanOutput, scannedAt: number): History => ({
     .sort((a, b) => total(b.rows) - total(a.rows)),
 })
 
-// ── 各 session 的實際費用 ──────────────────────────────
+// ── Actual cost per session ──────────────────────────────
 
 const ACTUALS_KEY = 'actuals'
 
-/** session id → 實際費用（USD），跨 session 保存 */
+/** session id → actual cost (USD), kept across sessions */
 const loadActuals = async ($: EngineInterface) => ((await $.store.get(ACTUALS_KEY)) ?? {}) as Record<string, number>
 
-// 依序寫入，避免同時的寫入互相覆蓋
+// Write one at a time so concurrent writes don't overwrite each other
 let saving: Promise<void> = Promise.resolve()
 
 const saveActual = ($: EngineInterface, session: string, usd: number) => {
@@ -494,7 +622,7 @@ const saveActual = ($: EngineInterface, session: string, usd: number) => {
   return saving
 }
 
-/** 用附帶的 scripts/scan.py 讀 ~/.claude/projects，結果存進 history */
+/** Read ~/.claude/projects with the bundled scripts/scan.py and store the result in history */
 const scan = async ($: EngineInterface, isRefresh = false) => {
   if (await read($, isScanning)) {
     return
@@ -504,7 +632,7 @@ const scan = async ($: EngineInterface, isRefresh = false) => {
 
   try {
     const config = await configDir($)
-    // 目前 session 的費用尚未在 turn.complete 存下時，以即時值補上
+    // Fill in the current session's live cost in case turn.complete hasn't saved it yet
     const { cost } = await $.session.usage()
     const actuals = { ...(await loadActuals($)), ...(cost ? { [await $.session.id()]: cost.usd } : {}) }
     const { exitCode, stdout, stderr } = await $.process.run(
@@ -545,17 +673,23 @@ const scanIfStale = async ($: EngineInterface) => {
 }
 
 export const register: Register = on => {
-  // 目前歸屬的 skill：使用者送出新訊息時清空，skill 被載入時切換
+  // The skill costs are attributed to: cleared when the user sends a message, switched when a skill loads
   let current = NO_SKILL
 
   on('session.start', async ($, e, next) => {
+    const saved = await $.store.get(LANG_KEY)
+
+    if (isLang(saved)) {
+      await update($, lang, () => saved)
+    }
+
     await $.command.register({
       name: 'skill-cost',
-      description: '依 skill 與模型列出花費（all 全部紀錄、scan 重新掃描、prices 價格表、reset 歸零本次、hide/show 提示列）',
-      argumentHint: '[all | scan | prices | reset | hide | show]',
+      description: TEXT[await read($, lang)].description,
+      argumentHint: '[all | scan | prices | reset | hide | show | lang [en|zh]]',
     })
 
-    // 啟動時在背景掃描一次，不擋住 session
+    // Scan once in the background at startup without blocking the session
     void scan($)
 
     const state = await read($, ledger)
@@ -606,42 +740,58 @@ export const register: Register = on => {
   on('command.run', { command: 'skill-cost' }, async ($, e) => {
     const arg = e.args.trim()
     const folder = await $.session.cwd()
+    const language = await read($, lang)
+    const t = TEXT[language]
+
+    if (arg === 'lang' || arg.startsWith('lang ')) {
+      // With no language given, toggle between Chinese and English
+      const want = arg.slice('lang'.length).trim().toLowerCase() || (language === 'zh' ? 'en' : 'zh')
+
+      if (!isLang(want)) {
+        return { text: t.badLang(want) }
+      }
+
+      await update($, lang, () => want)
+      await $.store.set(LANG_KEY, want)
+
+      return { text: TEXT[want].switched }
+    }
 
     if (arg === 'reset') {
       const { cost } = await $.session.usage()
       await update($, ledger, () => ({ lastUsd: cost?.usd ?? 0, rows: {}, models: {} }))
 
-      return { text: '本次 session 已歸零。' }
+      return { text: t.reset }
     }
 
     if (arg === 'prices') {
-      return { text: await listPrices($) }
+      return { text: await listPrices($, language) }
     }
 
     if (arg === 'scan') {
-      // 一併強制更新官方價格
+      // Also force a refresh of official prices
       await scan($, true)
 
-      return { text: folderReport(await read($, history)) }
+      return { text: folderReport(await read($, history), language) }
     }
 
     if (arg === 'hide' || arg === 'show') {
       await update($, isHidden, () => arg === 'hide')
 
-      return { text: arg === 'hide' ? '已隱藏提示列。' : '已顯示提示列。' }
+      return { text: arg === 'hide' ? t.hidden : t.shown }
     }
 
     if (arg === 'all') {
       await scanIfStale($)
 
-      return { text: folderReport(await read($, history)) }
+      return { text: folderReport(await read($, history), language) }
     }
 
     await scanIfStale($)
 
     const { cost } = await $.session.usage()
 
-    return { text: `${report(withGap(await read($, ledger), cost?.usd ?? 0), folder, await read($, history))}\n\n${HELP}` }
+    return { text: `${report(withGap(await read($, ledger), cost?.usd ?? 0), folder, await read($, history), language)}\n\n${t.help}` }
   })
 
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
@@ -653,12 +803,13 @@ export const register: Register = on => {
     const session = withGap(await read($, ledger), cost?.usd ?? 0)
     const folder = await $.session.cwd()
     const record = (await read($, history))?.folders.find(one => one.folder === folder)
+    const language = await read($, lang)
     const { Box, Text } = $.ui.resolve(e)
 
     return (
       <Box>
         <Text dimColor>
-          本次 {summary(session.rows, session.models ?? {})} · 此資料夾歷來 ≈{usdLabel(total(record?.rows ?? {}))} · /skill-cost 看明細
+          {TEXT[language].band(summary(session.rows, session.models ?? {}, language), usdLabel(total(record?.rows ?? {})))}
         </Text>
       </Box>
     )
