@@ -285,14 +285,54 @@ def text_of(entry):
     return ""
 
 
+HOME = os.path.expanduser("~")
+DEFAULT_AGENT = "general-purpose"
+
+
+def short_path(path):
+    """Show paths under the home directory as ~/..."""
+    return "~" + path[len(HOME) :] if HOME and path.startswith(HOME + os.sep) else path
+
+
+def blank_extras():
+    """instructions: path → {kind, loads}; agents: subagent type → calls"""
+    return {"instructions": {}, "agents": {}}
+
+
+def note_instructions(extras, attachment):
+    """Count the instruction files (CLAUDE.md, .claude/rules/*.md, memory) an attachment loaded"""
+    kind = attachment.get("type")
+    if kind == "instructions":
+        files = attachment.get("files") or []
+    elif kind == "nested_memory":
+        files = [attachment]
+    else:
+        return
+
+    for one in files:
+        if not isinstance(one, dict):
+            continue
+        path = one.get("path")
+        content = one.get("content")
+        if not path and isinstance(content, dict):
+            path = content.get("path")
+        if not isinstance(path, str) or not path:
+            continue
+        label = "Rule" if "/.claude/rules/" in path else str(one.get("type") or "")
+        row = extras["instructions"].setdefault(short_path(path), {"kind": label, "loads": 0})
+        row["loads"] += 1
+
+
 def read_calls(path, is_subagent):
-    """Return (folder, last time, [(model, usage, skill), ...])"""
+    """Return (folder, last time, [(model, usage, skill), ...], extras)"""
     current = SUBAGENT if is_subagent else NO_SKILL
     # One response is split across several lines with the same usage: dedupe by message.id, keeping the last line
     calls = {}
     order = []
     folder = None
     last_at = ""
+    extras = blank_extras()
+    agent_ids = set()
 
     with open(path, encoding="utf-8", errors="replace") as handle:
         for line in handle:
@@ -304,6 +344,10 @@ def read_calls(path, is_subagent):
             folder = folder or entry.get("cwd")
             last_at = entry.get("timestamp") or last_at
             kind = entry.get("type")
+
+            attachment = entry.get("attachment")
+            if isinstance(attachment, dict):
+                note_instructions(extras, attachment)
 
             if kind == "user" and not is_subagent:
                 if is_prompt(entry):
@@ -326,6 +370,14 @@ def read_calls(path, is_subagent):
                     if skill and not is_subagent:
                         current = skill
 
+                # Each Agent (formerly Task) tool call starts one subagent; the same call can repeat across split lines
+                if isinstance(block, dict) and block.get("type") == "tool_use" and block.get("name") in ("Agent", "Task"):
+                    call_id = block.get("id") or ""
+                    if call_id not in agent_ids:
+                        agent_ids.add(call_id)
+                        agent = (block.get("input") or {}).get("subagent_type") or DEFAULT_AGENT
+                        extras["agents"][agent] = extras["agents"].get(agent, 0) + 1
+
             if not usage or model.startswith("<"):
                 continue
 
@@ -336,7 +388,15 @@ def read_calls(path, is_subagent):
             skill = calls[key][2] if key in calls else current
             calls[key] = (model, usage, skill)
 
-    return folder, last_at, [calls[key] for key in order]
+    return folder, last_at, [calls[key] for key in order], extras
+
+
+def merge_extras(into, extras):
+    for path, row in extras["instructions"].items():
+        kept = into["instructions"].setdefault(path, {"kind": row["kind"], "loads": 0})
+        kept["loads"] += row["loads"]
+    for agent, count in extras["agents"].items():
+        into["agents"][agent] = into["agents"].get(agent, 0) + count
 
 
 # ── Totals ──────────────────────────────────────────────
@@ -355,7 +415,7 @@ def add(row, usd, usage):
     row["steps"] += 1
 
 
-def add_session(folders, folder, last_at, priced, actual):
+def add_session(folders, folder, last_at, priced, actual, extras):
     """priced: [(model, usage, skill, estimated cost)]; actual is the actual cost or None"""
     estimated = sum(usd for _, _, _, usd in priced)
     # With an actual cost, scale proportionally, keeping the split across skills and models
@@ -363,9 +423,20 @@ def add_session(folders, folder, last_at, priced, actual):
     factor = actual / estimated if is_actual else 1.0
 
     record = folders.setdefault(
-        folder, {"rows": {}, "models": {}, "sessions": 0, "actualSessions": 0, "lastAt": ""}
+        folder,
+        {"rows": {}, "models": {}, "sessions": 0, "actualSessions": 0, "lastAt": "", "instructions": {}, "agents": {}},
     )
     record["sessions"] += 1
+
+    # Loads and calls add up; sessions count how many sessions used each file or agent type
+    for path, row in extras["instructions"].items():
+        kept = record["instructions"].setdefault(path, {"kind": row["kind"], "loads": 0, "sessions": 0})
+        kept["loads"] += row["loads"]
+        kept["sessions"] += 1
+    for agent, count in extras["agents"].items():
+        kept = record["agents"].setdefault(agent, {"calls": 0, "sessions": 0})
+        kept["calls"] += count
+        kept["sessions"] += 1
     record["actualSessions"] += 1 if is_actual else 0
     record["lastAt"] = max(record["lastAt"], last_at)
 
@@ -387,8 +458,10 @@ def list_prices(prices, sources, status):
 
 
 def main():
-    args = [arg for arg in sys.argv[1:] if arg != "--refresh"]
+    args = [arg for arg in sys.argv[1:] if arg != "--refresh" and not arg.startswith("--session=")]
     force = "--refresh" in sys.argv
+    # The session whose instruction files and agents are reported on their own as "current"
+    current_id = next((arg.split("=", 1)[1] for arg in sys.argv[1:] if arg.startswith("--session=")), None)
 
     if args and args[0] == "--prices":
         list_prices(*load_prices(args[1], args[2], force))
@@ -404,6 +477,7 @@ def main():
 
     folders = {}
     unpriced = set()
+    current = blank_extras()
 
     def priced(calls):
         result = []
@@ -424,20 +498,25 @@ def main():
             if not name.endswith(".jsonl"):
                 continue
             session = name[: -len(".jsonl")]
-            folder, last_at, calls = read_calls(os.path.join(base, name), False)
+            folder, last_at, calls, extras = read_calls(os.path.join(base, name), False)
 
             # Subagents may run in a subdirectory; count them toward their session's folder and actual cost
             agents = os.path.join(base, session, "subagents")
             if os.path.isdir(agents):
                 for agent in sorted(os.listdir(agents)):
                     if agent.endswith(".jsonl"):
-                        calls += read_calls(os.path.join(agents, agent), True)[2]
+                        _, _, more, more_extras = read_calls(os.path.join(agents, agent), True)
+                        calls += more
+                        merge_extras(extras, more_extras)
+
+            if session == current_id:
+                merge_extras(current, extras)
 
             if folder and calls:
-                add_session(folders, folder, last_at, priced(calls), actuals.get(session))
+                add_session(folders, folder, last_at, priced(calls), actuals.get(session), extras)
 
     json.dump(
-        {"folders": folders, "unpriced": sorted(unpriced), "online": status},
+        {"folders": folders, "unpriced": sorted(unpriced), "online": status, "current": current},
         sys.stdout,
         ensure_ascii=False,
     )

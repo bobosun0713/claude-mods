@@ -29,18 +29,22 @@ Tracks Claude Code token usage and cost by skill and model, for the current sess
 | `/skill-cost hide` | Hide the summary line above the prompt |
 | `/skill-cost show` | Show the summary line above the prompt |
 | `/skill-cost lang [en\|zh]` | Switch reports and the summary line between English and Traditional Chinese; with no argument, toggles. The choice is kept across sessions |
+| `/skill-cost theme [name]` | With no name, list the colour themes with a preview; with a name, switch to it: `blue` (default), `green`, `purple`, `orange`, `pink`, `mono`, or `plain` (the original plain-text look). Kept across sessions |
+| `/skill-cost band [table\|compact\|line]` | Layout of the summary line: a bordered table (default), one bordered row, or one line; with no argument, moves to the next one. Kept across sessions |
 
 ### Summary line
 
-A line above the prompt shows the current session's cost, how many skills and models it used, and the current project directory's total cost (marked `≈` when part of it is estimated):
+Above the prompt, the mod shows the current session's cost, how many skills and models it used, and the current project directory's total cost (marked `≈` when part of it is estimated):
 
 ```
 本次 US$9.23 · 1 種 skill · 1 種模型 · 此資料夾歷來 ≈US$327.66 · /skill-cost 看明細
 ```
 
+By default this is drawn as a bordered table in the current theme, with one row for this session and one for this folder all time (scope, cost, skills, models, agents, calls, output and cache reads). `/skill-cost band compact` shows one bordered row instead, and `band line` one line; the `plain` theme always keeps the single dim line above.
+
 ### Reports
 
-Each scope has two tables.
+Each scope has a skill table, a model table, a table of instruction files loaded, and a table of agents started.
 
 **Skill table**
 
@@ -57,7 +61,15 @@ Each scope has two tables.
 
 Lists each model's cost, call count, output tokens, and cache read tokens, plus the skills it was called under and how many times (for example `git-commit×5`).
 
-Tables adapt to the terminal width: when space is short, lower-priority columns are hidden and long values wrap.
+**Instruction file table**
+
+Lists the instruction files put into context (CLAUDE.md, `.claude/rules`, memory) with their kind, how many times each was loaded and, outside the current session, in how many sessions. `.claude/rules` files are listed first. A load count says how often a file entered the context, not how often the model followed it.
+
+**Agent table**
+
+Lists subagents started through the Agent tool by type, with call counts and, outside the current session, session counts. The cost of subagents is still shown as one `(subagent)` row in the skill table.
+
+Tables adapt to the terminal width: when space is short, lower-priority columns are hidden, long values wrap, and long paths are shortened in the middle (`~/.claude/…/memory/MEMORY.md`). Except with the `plain` theme, reports are drawn as bordered tables with a coloured header; the text the model reads stays plain. In a terminal that is not in fullscreen mode, a report keeps the layout it was printed with when the window is later resized.
 
 ## How costs are calculated
 

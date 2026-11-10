@@ -9,7 +9,7 @@ import unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from scan import cost_of, from_official, price_of  # noqa: E402
+from scan import cost_of, from_official, price_of, read_calls  # noqa: E402
 
 PAGE = """# Pricing
 
@@ -114,6 +114,39 @@ class CostTest(unittest.TestCase):
             self.assertIsNotNone(price_of(self.prices, model), model)
         for model in ("claude-opus-5-5-beta", "claude-opus-4-9", "claude-opus"):
             self.assertIsNone(price_of(self.prices, model), model)
+
+
+
+class ExtrasTest(unittest.TestCase):
+    def test_counts_instruction_files_and_agents(self):
+        import json
+        import tempfile
+
+        home = os.path.expanduser("~")
+        lines = [
+            {"type": "attachment", "cwd": "/p", "attachment": {"type": "instructions", "files": [
+                {"path": home + "/.claude/CLAUDE.md", "type": "User"},
+                {"path": "/p/.claude/rules/vue.md", "type": "Project"},
+            ]}},
+            {"type": "attachment", "attachment": {"type": "nested_memory", "path": "/p/.claude/rules/vue.md", "content": {"type": "Project"}}},
+        ]
+        call = {"type": "tool_use", "id": "t1", "name": "Agent", "input": {"subagent_type": "executor"}}
+        # One response split over two lines repeats the same tool_use; count it once
+        for _ in range(2):
+            lines.append({"type": "assistant", "message": {"id": "m1", "model": "<synthetic>", "content": [call]}})
+        lines.append({"type": "assistant", "message": {"id": "m2", "model": "<synthetic>", "content": [
+            {"type": "tool_use", "id": "t2", "name": "Task", "input": {}},
+        ]}})
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as handle:
+            handle.write("\n".join(json.dumps(line) for line in lines))
+
+        _, _, _, extras = read_calls(handle.name, False)
+        os.unlink(handle.name)
+
+        self.assertEqual(extras["instructions"]["~/.claude/CLAUDE.md"], {"kind": "User", "loads": 1})
+        self.assertEqual(extras["instructions"]["/p/.claude/rules/vue.md"], {"kind": "Rule", "loads": 2})
+        self.assertEqual(extras["agents"], {"executor": 1, "general-purpose": 1})
 
 
 if __name__ == "__main__":

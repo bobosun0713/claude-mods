@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'claude-code/testing'
 
-import { basis, charge, priceReport, chunk, fit, folderReport, mergeFolders, toHistory, modelTable, padEnd, report, skillTable, tableText, withGap } from '../hooks/register'
+import { agentTable, basis, charge, ellipsize, wrapTitle, priceReport, chunk, fit, folderReport, instructionTable, mergeFolders, toHistory, modelTable, padEnd, report, skillTable, tableText, withGap } from '../hooks/register'
 import type { Ledger } from '../types'
 
 const usage = { model: 'opus', input_tokens: 100, output_tokens: 50, cache_read_input_tokens: 1000, cache_creation_input_tokens: 10 }
@@ -216,5 +216,110 @@ describe('English interface', () => {
     expect(text).toMatch(/claude-opus-5-5\s+official\s+4\s+20/)
     expect(folderReport(null, 'en')).toBe('No folder records yet. (scanning transcripts…)')
     expect(basis(3, 1, 'en')).toBe('3 sessions: 1 actual, 2 estimated')
+  })
+})
+
+describe('instruction files and agents', () => {
+  const files = {
+    '~/.claude/CLAUDE.md': { kind: 'User', loads: 26, sessions: 25 },
+    '~/p/.claude/rules/vue.md': { kind: 'Rule', loads: 3, sessions: 2 },
+  }
+
+  test('lists .claude/rules files first, with load and session counts', () => {
+    const table = instructionTable(files)
+    expect(table.rows[0]).toEqual(['~/p/.claude/rules/vue.md', '規則', '3', '2'])
+    expect(table.rows[1]).toEqual(['~/.claude/CLAUDE.md', '使用者', '26', '25'])
+    // One session has no session count column
+    expect(instructionTable({ '~/a.md': { kind: 'Project', loads: 1 } }, 'en').columns.map(one => one.title)).toEqual(['File', 'Kind', 'Loads'])
+  })
+
+  test('counts agents by type, most called first', () => {
+    expect(agentTable({ explore: 1, executor: 3 }).rows).toEqual([
+      ['executor', '3'],
+      ['explore', '1'],
+    ])
+    expect(agentTable({ executor: { calls: 5, sessions: 2 } }, 'en').rows).toEqual([['executor', '5', '2']])
+  })
+
+  test('reports show this session and this folder, and merge every folder', () => {
+    const s: Ledger = { lastUsd: 0, rows: {}, agents: { executor: 2 } }
+    const record = { folder: '/p', rows: {}, sessions: 2, actualSessions: 0, lastAt: '', instructions: files, agents: { executor: { calls: 4, sessions: 2 } } }
+    const data = { scannedAt: 0, unpriced: [], folders: [record], current: { instructions: { '~/.claude/CLAUDE.md': { kind: 'User', loads: 1 } }, agents: {} } }
+    const text = report(s, '/p', data)
+    expect(text).toContain('啟動的 agent（共 2 次）')
+    expect(text).toContain('啟動的 agent（共 4 次）')
+    expect(text).toMatch(/~\/p\/\.claude\/rules\/vue\.md\s+規則\s+3\s+2/)
+
+    const all = mergeFolders([record, { ...record, folder: '/q' }])
+    expect(all.agents).toEqual({ executor: { calls: 8, sessions: 4 } })
+    expect(all.instructions['~/p/.claude/rules/vue.md']).toEqual({ kind: 'Rule', loads: 6, sessions: 4 })
+    expect(folderReport({ ...data, folders: [record] })).toContain('載入的指令檔')
+  })
+})
+
+describe('ellipsize', () => {
+  const path = '~/.claude/projects/-Users-2203350-Documents-vibe-tw-ticker-extension/memory/MEMORY.md'
+
+  test('keeps a path that fits', () => {
+    expect(ellipsize('~/a/b.md', 20)).toBe('~/a/b.md')
+  })
+
+  test('cuts the middle, keeping a short head and as much of the end as fits', () => {
+    const short = ellipsize(path, 40)
+    expect(short.length).toBeLessThanOrEqual(40)
+    expect(short.startsWith('~/.claude/…')).toBe(true)
+    // The end keeps the part that tells two memory files apart
+    expect(short).toContain('extension/memory/MEMORY.md')
+    const other = ellipsize('~/.claude/projects/-Users-2203350-Documents-starlux-jxms-vue/memory/MEMORY.md', 40)
+    expect(other).not.toBe(short)
+  })
+
+  test('falls back to cutting characters when even the file name is too long', () => {
+    const short = ellipsize('~/a-very-long-file-name-without-any-slashes.md', 12)
+    expect(short).toBe('~/…lashes.md')
+    expect(short.length).toBeLessThanOrEqual(12)
+  })
+
+  test('does not keep a meaningless fragment before a slash', () => {
+    expect(ellipsize('/Users/2203350/Documents/starlux/fpms-vue', 36)).toBe('/Users/…/Documents/starlux/fpms-vue')
+  })
+
+  test('a narrow table hides lower-priority columns before squeezing a path', () => {
+    const table = fit(instructionTable({ [path]: { kind: 'AutoMem', loads: 1, sessions: 1 } }), 66, 3)
+    expect(table.columns.map(one => one.title)).toEqual(['檔案', '類型', '載入次數'])
+    expect(table.columns[0]?.width).toBeGreaterThanOrEqual(36)
+  })
+
+  test('path columns shorten instead of wrapping', () => {
+    const lines = tableText(instructionTable({ [path]: { kind: 'AutoMem', loads: 1, sessions: 1 } }), 60).split('\n')
+    // header, rule, one row: the long path no longer spills onto a second line
+    expect(lines).toHaveLength(3)
+    expect(lines[2]).toContain('…')
+    expect(lines[2]).toContain('MEMORY.md')
+  })
+})
+
+describe('wrapTitle', () => {
+  const title = '全部使用紀錄（5 個資料夾，58 個 session，1 個實際、57 個估算）：US$63.23 · 2 種 skill · 2 種模型 '
+
+  test('keeps a title that fits on one line', () => {
+    expect(wrapTitle(title, 120)).toEqual(['全部使用紀錄（5 個資料夾，58 個 session，1 個實際、57 個估算）：US$63.23 · 2 種 skill · 2 種模型'])
+  })
+
+  test('breaks between parts, never starting a line with a separator', () => {
+    const lines = wrapTitle(title, 70)
+    expect(lines).toEqual(['全部使用紀錄（5 個資料夾，58 個 session，1 個實際、57 個估算）：', 'US$63.23 · 2 種 skill · 2 種模型'])
+  })
+
+  test('breaks a part too long for a line after Chinese commas', () => {
+    const lines = wrapTitle(title, 30)
+    expect(lines.slice(0, 2)).toEqual(['全部使用紀錄（5 個資料夾，', '58 個 session，1 個實際、'])
+    for (const line of lines) {
+      // No wider than 30 cells (padding to 31 still adds a space), and no line opens with a separator
+      expect(padEnd(line, 31)).not.toBe(line)
+      expect(line.startsWith('·')).toBe(false)
+    }
+    // Nothing is lost
+    expect(lines.join('').replace(/\s/g, '')).toBe(title.replace(/\s/g, ''))
   })
 })
